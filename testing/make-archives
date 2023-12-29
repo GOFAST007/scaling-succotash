@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import gzip
+import os.path
+import shutil
+import subprocess
+import tarfile
+import tempfile
+from collections.abc import Sequence
+
+
+# This is a script for generating the tarred resources for git repo
+# dependencies.  Currently it's just for "vendoring" ruby support packages.
+
+
+REPOS = (
+    ('rbenv', 'https://github.com/rbenv/rbenv', '38e1fbb'),
+    ('ruby-build', 'https://github.com/rbenv/ruby-build', '855b963'),
+    (
+        'ruby-download',
+        'https://github.com/garnieretienne/rvm-download',
+        '09bd7c6',
+    ),
+)
+
+
+def reset(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo:
+    tarinfo.uid = tarinfo.gid = 0
+    tarinfo.uname = tarinfo.gname = 'root'
+    tarinfo.mtime = 0
+    return tarinfo
+
+
+def make_archive(name: str, repo: str, ref: str, destdir: str) -> str:
+    output_path = os.path.join(destdir, f'{name}.tar.gz')
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # this ensures that the root directory has umask permissions
+        gitdir = os.path.join(tmpdir, 'root')
+
+        # Clone the repository to the temporary directory
+        subprocess.check_call(('git', 'clone', repo, gitdir))
+        subprocess.check_call(('git', '-C', gitdir, 'checkout', ref))
+
+        # We don't want the '.git' directory
+        # It adds a bunch of size to the archive and we don't use it at
+        # runtime
+        shutil.rmtree(os.path.join(gitdir, '.git'))
+
+        arcs = [(name, gitdir)]
+        for root, dirs, filenames in os.walk(gitdir):
+            for filename in dirs + filenames:
+                abspath = os.path.abspath(os.path.join(root, filename))
+                relpath = os.path.relpath(abspath, gitdir)
+                arcs.append((os.path.join(name, relpath), abspath))
+        arcs.sort()
+
+        with gzip.GzipFile(output_path, 'wb', mtime=0) as gzipf:
+            # https://github.com/python/typeshed/issues/5491
+            with tarfile.open(fileobj=gzipf, mode='w') as tf:  # type: ignore
+                for arcname, abspath in arcs:
+                    tf.add(
+                        abspath,
+                        arcname=arcname,
+                        recursive=False,
+                        filter=reset,
+                    )
+
+    return output_path
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dest', default='pre_commit/resources')
+    args = parser.parse_args(argv)
+    for archive_name, repo, ref in REPOS:
+        print(f'Making {archive_name}.tar.gz for {repo}@{ref}')
+        make_archive(archive_name, repo, ref, args.dest)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

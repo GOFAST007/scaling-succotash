@@ -1,0 +1,6 @@
+*.egg-info
+*.py[co]
+/.coverage
+/.tox
+/dist
+.vscode/

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+t() {
+    if [ -t "$1" ]; then
+        echo "$2: True"
+    else
+        echo "$2: False"
+    fi
+}
+t 0 stdin
+t 1 stdout
+t 2 stderr
